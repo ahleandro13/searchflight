@@ -15,7 +15,7 @@ from telegram.constants import ParseMode
 AMADEUS_API_KEY    = os.getenv("AMADEUS_API_KEY", "eoCeI32NL91jlziH9NdkHlMKBlUYfDPh")
 AMADEUS_API_SECRET = os.getenv("AMADEUS_API_SECRET", "n2luYirmCa7RNMNI")
 TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN", "8767742566:AAFYfn-rQJNweL--WWwbQEy1DsuI2jB4FB8")
-TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "5700288881")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "-5243665537")
 
 FECHAS_IDA = [
     "2026-07-10",
