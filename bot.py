@@ -18,12 +18,12 @@ TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN", "8767742566:AAFYfn-rQJNweL--WWw
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "5700288881")
 
 FECHAS_IDA = [
-    "2026-07-10", "2026-07-24",
-    "2026-08-07", "2026-08-21",
-    "2026-09-11", "2026-10-09",
-    "2026-12-05", "2026-12-19",
+    "2026-07-10",
+    "2026-08-07",
+    "2026-10-09",
+    "2026-12-05",
 ]
-DURACIONES = [5, 7, 10, 14]
+DURACIONES = [7, 14]
 
 REGIONES = [
     {
@@ -33,13 +33,13 @@ REGIONES = [
         "destinos": [
             {"ciudad": "Miami",            "codigo": "MIA", "emoji": "🌴"},
             {"ciudad": "Nueva York",       "codigo": "JFK", "emoji": "🗽"},
+            {"ciudad": "Newark",           "codigo": "EWR", "emoji": "🗽"},
             {"ciudad": "Los Angeles",      "codigo": "LAX", "emoji": "🎬"},
             {"ciudad": "Cancún",           "codigo": "CUN", "emoji": "🏖️"},
             {"ciudad": "Bogotá",           "codigo": "BOG", "emoji": "🇨🇴"},
             {"ciudad": "Punta Cana",       "codigo": "PUJ", "emoji": "🌺"},
             {"ciudad": "Rio de Janeiro",   "codigo": "GIG", "emoji": "🇧🇷"},
             {"ciudad": "Ciudad de México", "codigo": "MEX", "emoji": "🌮"},
-            {"ciudad": "Lima",             "codigo": "LIM", "emoji": "🇵🇪"},
             {"ciudad": "San José CR",      "codigo": "SJO", "emoji": "🌿"},
         ],
     },
