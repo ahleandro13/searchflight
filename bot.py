@@ -23,7 +23,7 @@ FECHAS_IDA = [
     "2026-10-09",
     "2026-12-05",
 ]
-DURACIONES = [7, 14]
+DURACIONES = [5, 7, 14]
 
 REGIONES = [
     {
@@ -100,7 +100,9 @@ def guardar_cache(cache):
 
 
 def buscar_vuelo(amadeus, origen, destino, precio_max):
+    """Retorna (mejor dentro del límite, mejor absoluto sin límite)"""
     mejor = None
+    mejor_absoluto = None
     for fecha_ida in FECHAS_IDA:
         for dias in DURACIONES:
             fecha_vuelta = (datetime.strptime(fecha_ida, "%Y-%m-%d") + timedelta(days=dias)).strftime("%Y-%m-%d")
@@ -116,30 +118,34 @@ def buscar_vuelo(amadeus, origen, destino, precio_max):
                 )
                 for oferta in response.data:
                     precio = float(oferta["price"]["total"])
+                    vuelo = {
+                        "origen":       origen,
+                        "destino":      destino,
+                        "fecha_ida":    fecha_ida,
+                        "fecha_vuelta": fecha_vuelta,
+                        "dias":         dias,
+                        "precio":       precio,
+                        "link": (
+                            f"https://www.skyscanner.com.ar/transporte/vuelos/"
+                            f"{origen.lower()}/{destino.lower()}/"
+                            f"{fecha_ida.replace('-','')}/{fecha_vuelta.replace('-','')}/"
+                        )
+                    }
                     if precio <= precio_max:
                         if mejor is None or precio < mejor["precio"]:
-                            mejor = {
-                                "origen":       origen,
-                                "destino":      destino,
-                                "fecha_ida":    fecha_ida,
-                                "fecha_vuelta": fecha_vuelta,
-                                "dias":         dias,
-                                "precio":       precio,
-                                "link": (
-                                    f"https://www.skyscanner.com.ar/transporte/vuelos/"
-                                    f"{origen.lower()}/{destino.lower()}/"
-                                    f"{fecha_ida.replace('-','')}/{fecha_vuelta.replace('-','')}/"
-                                )
-                            }
+                            mejor = vuelo
+                    if mejor_absoluto is None or precio < mejor_absoluto["precio"]:
+                        mejor_absoluto = vuelo
             except ResponseError as e:
                 log.warning(f"  Error {origen}->{destino} {fecha_ida}: {e}")
-    return mejor
+    return mejor, mejor_absoluto
 
 
-def formatear_vuelo(vuelo, emoji, ciudad, origen_label=None):
+def formatear_vuelo(vuelo, emoji, ciudad, origen_label=None, es_mejor_disponible=False):
     origen = origen_label or vuelo["origen"]
+    prefijo = "⚠️ *Mejor precio disponible*\n" if es_mejor_disponible else ""
     return (
-        f"{emoji} *{origen} → {ciudad}*\n"
+        f"{prefijo}{emoji} *{origen} → {ciudad}*\n"
         f"  📅 {vuelo['fecha_ida']} → {vuelo['fecha_vuelta']} _{vuelo['dias']} días_\n"
         f"  💰 *USD {vuelo['precio']:.0f}* ida y vuelta\n"
         f"  🔗 [Ver vuelo]({vuelo['link']})"
@@ -156,14 +162,20 @@ async def enviar_alertas():
     for region in REGIONES:
         log.info(f"Región: {region['nombre']}")
         resultados = []
+        mejores_absolutos = []
+
         for origen in ORIGENES:
             for dest in region["destinos"]:
                 log.info(f"  {origen} → {dest['ciudad']}")
-                vuelo = buscar_vuelo(amadeus, origen, dest["codigo"], region["precio_max"])
+                vuelo, vuelo_abs = buscar_vuelo(amadeus, origen, dest["codigo"], region["precio_max"])
                 if vuelo:
                     clave = f"{origen}-{dest['codigo']}-{vuelo['fecha_ida']}-{vuelo['precio']}"
                     if clave not in cache:
                         resultados.append({**vuelo, "ciudad": dest["ciudad"], "emoji": dest["emoji"], "clave": clave})
+                elif vuelo_abs:
+                    clave = f"{origen}-{dest['codigo']}-{vuelo_abs['fecha_ida']}-{vuelo_abs['precio']}"
+                    if clave not in cache:
+                        mejores_absolutos.append({**vuelo_abs, "ciudad": dest["ciudad"], "emoji": dest["emoji"], "clave": clave})
 
         resultados.sort(key=lambda x: x["precio"])
         top = resultados[:region["top"]]
@@ -177,16 +189,30 @@ async def enviar_alertas():
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
                 cache.add(v["clave"])
                 await asyncio.sleep(0.5)
+        else:
+            # No hubo vuelos dentro del precio, mandar el mejor disponible
+            mejores_absolutos.sort(key=lambda x: x["precio"])
+            mejor = mejores_absolutos[:1]
+            if mejor:
+                hubo_algo = True
+                header = f"{region['nombre']} — *Sin promos bajo USD {region['precio_max']}*\n📆 _{datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=header, parse_mode=ParseMode.MARKDOWN)
+                v = mejor[0]
+                msg = formatear_vuelo(v, v["emoji"], v["ciudad"], es_mejor_disponible=True)
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
+                cache.add(v["clave"])
+                await asyncio.sleep(0.5)
 
     log.info("Bonus Track...")
     bonus_encontrados = []
     for bt in BONUS_TRACK:
         log.info(f"  {bt['nombre']}")
-        vuelo = buscar_vuelo(amadeus, bt["origen"], bt["destino"], bt["precio_max"])
-        if vuelo:
-            clave = f"BT-{bt['origen']}-{bt['destino']}-{vuelo['fecha_ida']}-{vuelo['precio']}"
+        vuelo, vuelo_abs = buscar_vuelo(amadeus, bt["origen"], bt["destino"], bt["precio_max"])
+        v = vuelo or vuelo_abs
+        if v:
+            clave = f"BT-{bt['origen']}-{bt['destino']}-{v['fecha_ida']}-{v['precio']}"
             if clave not in cache:
-                bonus_encontrados.append({**vuelo, "nombre": bt["nombre"], "emoji": bt["emoji"], "clave": clave})
+                bonus_encontrados.append({**v, "nombre": bt["nombre"], "emoji": bt["emoji"], "clave": clave, "es_mejor": vuelo is None})
 
     bonus_encontrados.sort(key=lambda x: x["precio"])
     bonus_top = bonus_encontrados[:2]
@@ -196,7 +222,7 @@ async def enviar_alertas():
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="✨ *Bonus Track — Combinaciones especiales*", parse_mode=ParseMode.MARKDOWN)
         for v in bonus_top:
             partes = v["nombre"].split("→")
-            msg = formatear_vuelo(v, v["emoji"], partes[1].strip(), partes[0].strip())
+            msg = formatear_vuelo(v, v["emoji"], partes[1].strip(), partes[0].strip(), es_mejor_disponible=v.get("es_mejor", False))
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
             cache.add(v["clave"])
             await asyncio.sleep(0.5)
