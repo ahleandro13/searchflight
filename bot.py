@@ -1,5 +1,5 @@
 """
-✈️ SearchElfla Bot - Google Flights scraping
+✈️ SearchElfla Bot - Scraping TurismoCity
 Destinos fijos + comodín rotativo. 1 vez por día.
 """
 
@@ -66,11 +66,10 @@ async def buscar_vuelo(page, origen, destino, precio_max):
                 datetime.strptime(fecha_ida, "%Y-%m-%d") + timedelta(days=dias)
             ).strftime("%Y-%m-%d")
 
+            # URL directa de TurismoCity: /vuelos/ORIGEN/DESTINO/IDA/VUELTA/adultos/ninos/bebes
             url = (
-                f"https://www.google.com/travel/flights?"
-                f"q=flights+from+{origen}+to+{destino}"
-                f"+on+{fecha_ida}+returning+{fecha_vuelta}"
-                f"&curr=USD&hl=es"
+                f"https://www.turismocity.com.ar/vuelos/"
+                f"{origen}/{destino}/{fecha_ida}/{fecha_vuelta}/1/0/0"
             )
 
             try:
@@ -80,27 +79,20 @@ async def buscar_vuelo(page, origen, destino, precio_max):
                 content = await page.content()
                 precios = []
 
-                # Buscar precios con $
+                # TurismoCity muestra precios en USD con formato "USD 1.234" o "U$S 1.234"
                 for pattern in [
-                    r'\$\s*(\d{1,2},\d{3})',   # $1,234
-                    r'\$\s*(\d{3,4})',           # $345
-                    r'USD\s*(\d[\d,]+)',          # USD 1,234
+                    r'USD\s*(\d[\d\.]+)',
+                    r'U\$S\s*(\d[\d\.]+)',
+                    r'\$\s*(\d[\d\.]+)',
+                    r'"price"\s*:\s*(\d+)',
+                    r'"amount"\s*:\s*(\d+)',
+                    r'data-price="(\d+)"',
+                    r'class="[^"]*price[^"]*"[^>]*>\s*[\$USD]*\s*([\d\.]+)',
                 ]:
                     for m in re.findall(pattern, content):
                         try:
-                            p = float(m.replace(",", ""))
-                            if 200 < p < 8000:
-                                precios.append(p)
-                        except Exception:
-                            pass
-
-                # aria-label con precios
-                elementos = await page.query_selector_all('[aria-label*="$"], [aria-label*="USD"]')
-                for el in elementos:
-                    label = await el.get_attribute("aria-label") or ""
-                    for n in re.findall(r'[\$USD\s]+(\d[\d,]+)', label):
-                        try:
-                            p = float(n.replace(",", ""))
+                            # TurismoCity usa punto como separador de miles
+                            p = float(m.replace(".", "").replace(",", "."))
                             if 200 < p < 8000:
                                 precios.append(p)
                         except Exception:
@@ -108,11 +100,7 @@ async def buscar_vuelo(page, origen, destino, precio_max):
 
                 if precios:
                     precio = min(precios)
-                    link = (
-                        f"https://www.google.com/travel/flights?"
-                        f"q=flights+from+{origen}+to+{destino}"
-                        f"+on+{fecha_ida}+returning+{fecha_vuelta}&curr=USD"
-                    )
+                    link = url
                     vuelo = {
                         "origen": origen, "destino": destino,
                         "fecha_ida": fecha_ida, "fecha_vuelta": fecha_vuelta,
@@ -144,7 +132,7 @@ def formatear_vuelo(vuelo, emoji, ciudad, es_mejor_disponible=False):
 
 
 async def enviar_alertas():
-    log.info("🔍 Iniciando búsqueda con Google Flights...")
+    log.info("🔍 Iniciando búsqueda en TurismoCity...")
     bot = Bot(token=TELEGRAM_TOKEN)
     cache = cargar_cache()
     hubo_algo = False
