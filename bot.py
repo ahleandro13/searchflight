@@ -1,6 +1,6 @@
 """
-✈️ SearchElfla Bot - Alertas de Vuelos
-Busca las mejores promos por región cada 2 horas y avisa por Telegram.
+✈️ SearchElfla Bot - Amadeus API optimizada
+1 corrida por día, destinos fijos + comodín rotativo.
 """
 
 import asyncio
@@ -17,67 +17,28 @@ AMADEUS_API_SECRET = os.getenv("AMADEUS_API_SECRET", "n2luYirmCa7RNMNI")
 TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN", "8767742566:AAFYfn-rQJNweL--WWwbQEy1DsuI2jB4FB8")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "-5243665537")
 
-FECHAS_IDA = [
-    "2026-07-10",
-    "2026-08-07",
-    "2026-10-09",
-    "2026-12-05",
-]
-DURACIONES = [5, 7, 14]
+# ─── FECHAS Y DURACIONES (reducido para no pasarse del límite) ────────────────
+FECHAS_IDA = ["2026-07-10", "2026-12-05"]
+DURACIONES = [7, 14]
 
-REGIONES = [
-    {
-        "nombre": "🌎 América",
-        "precio_max": 600,
-        "top": 3,
-        "destinos": [
-            {"ciudad": "Miami",            "codigo": "MIA", "emoji": "🌴"},
-            {"ciudad": "Nueva York",       "codigo": "JFK", "emoji": "🗽"},
-            {"ciudad": "Newark",           "codigo": "EWR", "emoji": "🗽"},
-            {"ciudad": "Los Angeles",      "codigo": "LAX", "emoji": "🎬"},
-            {"ciudad": "Cancún",           "codigo": "CUN", "emoji": "🏖️"},
-            {"ciudad": "Bogotá",           "codigo": "BOG", "emoji": "🇨🇴"},
-            {"ciudad": "Punta Cana",       "codigo": "PUJ", "emoji": "🌺"},
-            {"ciudad": "Rio de Janeiro",   "codigo": "GIG", "emoji": "🇧🇷"},
-            {"ciudad": "Ciudad de México", "codigo": "MEX", "emoji": "🌮"},
-            {"ciudad": "San José CR",      "codigo": "SJO", "emoji": "🌿"},
-        ],
-    },
-    {
-        "nombre": "🌍 Europa",
-        "precio_max": 800,
-        "top": 3,
-        "destinos": [
-            {"ciudad": "Madrid",    "codigo": "MAD", "emoji": "🥘"},
-            {"ciudad": "Barcelona", "codigo": "BCN", "emoji": "🏟️"},
-            {"ciudad": "Lisboa",    "codigo": "LIS", "emoji": "🇵🇹"},
-            {"ciudad": "Roma",      "codigo": "FCO", "emoji": "🍕"},
-            {"ciudad": "París",     "codigo": "CDG", "emoji": "🗼"},
-            {"ciudad": "Londres",   "codigo": "LHR", "emoji": "🇬🇧"},
-            {"ciudad": "Amsterdam", "codigo": "AMS", "emoji": "🌷"},
-            {"ciudad": "Berlín",    "codigo": "BER", "emoji": "🇩🇪"},
-        ],
-    },
-    {
-        "nombre": "🌏 Asia & Medio Oriente",
-        "precio_max": 1200,
-        "top": 3,
-        "destinos": [
-            {"ciudad": "Tokio",    "codigo": "NRT", "emoji": "🗾"},
-            {"ciudad": "Bangkok",  "codigo": "BKK", "emoji": "🇹🇭"},
-            {"ciudad": "Bali",     "codigo": "DPS", "emoji": "🌺"},
-            {"ciudad": "Dubai",    "codigo": "DXB", "emoji": "🏙️"},
-            {"ciudad": "Singapur", "codigo": "SIN", "emoji": "🦁"},
-            {"ciudad": "Seoul",    "codigo": "ICN", "emoji": "🇰🇷"},
-        ],
-    },
+# ─── DESTINOS FIJOS ───────────────────────────────────────────────────────────
+DESTINOS_FIJOS = [
+    {"ciudad": "Rio de Janeiro", "codigo": "GIG", "emoji": "🇧🇷", "precio_max": 600},
+    {"ciudad": "Nueva York",     "codigo": "JFK", "emoji": "🗽", "precio_max": 600},
+    {"ciudad": "Newark",         "codigo": "EWR", "emoji": "🗽", "precio_max": 600},
+    {"ciudad": "Tokio",          "codigo": "NRT", "emoji": "🗾", "precio_max": 1200},
+    {"ciudad": "Madrid",         "codigo": "MAD", "emoji": "🥘", "precio_max": 800},
 ]
 
-BONUS_TRACK = [
-    {"nombre": "GRU → Los Angeles", "origen": "GRU", "destino": "LAX", "precio_max": 900,  "emoji": "🎬"},
-    {"nombre": "EZE → Tokio",       "origen": "EZE", "destino": "NRT", "precio_max": 1300, "emoji": "🗾"},
-    {"nombre": "AEP → Miami",       "origen": "AEP", "destino": "MIA", "precio_max": 650,  "emoji": "🌴"},
-    {"nombre": "EZE → Bangkok",     "origen": "EZE", "destino": "BKK", "precio_max": 1100, "emoji": "🇹🇭"},
+# ─── COMODÍN ROTATIVO (uno por día de la semana) ──────────────────────────────
+COMODINES = [
+    {"ciudad": "Marruecos",    "codigo": "CMN", "emoji": "🇲🇦", "precio_max": 900},   # Lunes
+    {"ciudad": "París",        "codigo": "CDG", "emoji": "🗼", "precio_max": 800},   # Martes
+    {"ciudad": "Porto",        "codigo": "OPO", "emoji": "🇵🇹", "precio_max": 800},  # Miércoles
+    {"ciudad": "Los Angeles",  "codigo": "LAX", "emoji": "🎬", "precio_max": 700},   # Jueves
+    {"ciudad": "Corea del Sur","codigo": "ICN", "emoji": "🇰🇷", "precio_max": 1200}, # Viernes
+    {"ciudad": "China",        "codigo": "PEK", "emoji": "🇨🇳", "precio_max": 1200}, # Sábado
+    {"ciudad": "Marruecos",    "codigo": "CMN", "emoji": "🇲🇦", "precio_max": 900},  # Domingo
 ]
 
 ORIGENES = ["EZE", "AEP"]
@@ -100,7 +61,6 @@ def guardar_cache(cache):
 
 
 def buscar_vuelo(amadeus, origen, destino, precio_max):
-    """Retorna (mejor dentro del límite, mejor absoluto sin límite)"""
     mejor = None
     mejor_absoluto = None
     for fecha_ida in FECHAS_IDA:
@@ -119,12 +79,9 @@ def buscar_vuelo(amadeus, origen, destino, precio_max):
                 for oferta in response.data:
                     precio = float(oferta["price"]["total"])
                     vuelo = {
-                        "origen":       origen,
-                        "destino":      destino,
-                        "fecha_ida":    fecha_ida,
-                        "fecha_vuelta": fecha_vuelta,
-                        "dias":         dias,
-                        "precio":       precio,
+                        "origen": origen, "destino": destino,
+                        "fecha_ida": fecha_ida, "fecha_vuelta": fecha_vuelta,
+                        "dias": dias, "precio": precio,
                         "link": (
                             f"https://www.skyscanner.com.ar/transporte/vuelos/"
                             f"{origen.lower()}/{destino.lower()}/"
@@ -159,70 +116,54 @@ async def enviar_alertas():
     cache = cargar_cache()
     hubo_algo = False
 
-    for region in REGIONES:
-        log.info(f"Región: {region['nombre']}")
-        resultados = []
-        mejores_absolutos = []
+    # Comodín del día
+    dia_semana = datetime.now().weekday()  # 0=Lunes, 6=Domingo
+    comodin = COMODINES[dia_semana]
+    log.info(f"🎲 Comodín de hoy ({datetime.now().strftime('%A')}): {comodin['ciudad']}")
 
+    todos_destinos = DESTINOS_FIJOS + [comodin]
+    resultados = []
+    mejores_absolutos = []
+
+    for dest in todos_destinos:
         for origen in ORIGENES:
-            for dest in region["destinos"]:
-                log.info(f"  {origen} → {dest['ciudad']}")
-                vuelo, vuelo_abs = buscar_vuelo(amadeus, origen, dest["codigo"], region["precio_max"])
-                if vuelo:
-                    clave = f"{origen}-{dest['codigo']}-{vuelo['fecha_ida']}-{vuelo['precio']}"
-                    if clave not in cache:
-                        resultados.append({**vuelo, "ciudad": dest["ciudad"], "emoji": dest["emoji"], "clave": clave})
-                elif vuelo_abs:
-                    clave = f"{origen}-{dest['codigo']}-{vuelo_abs['fecha_ida']}-{vuelo_abs['precio']}"
-                    if clave not in cache:
-                        mejores_absolutos.append({**vuelo_abs, "ciudad": dest["ciudad"], "emoji": dest["emoji"], "clave": clave})
+            log.info(f"  {origen} → {dest['ciudad']}")
+            vuelo, vuelo_abs = buscar_vuelo(amadeus, origen, dest["codigo"], dest["precio_max"])
 
-        resultados.sort(key=lambda x: x["precio"])
-        top = resultados[:region["top"]]
+            if vuelo:
+                clave = f"{origen}-{dest['codigo']}-{vuelo['fecha_ida']}-{vuelo['precio']}"
+                if clave not in cache:
+                    resultados.append({**vuelo, "ciudad": dest["ciudad"], "emoji": dest["emoji"], "clave": clave, "precio_max": dest["precio_max"]})
+            elif vuelo_abs:
+                clave = f"{origen}-{dest['codigo']}-{vuelo_abs['fecha_ida']}-{vuelo_abs['precio']}"
+                if clave not in cache:
+                    mejores_absolutos.append({**vuelo_abs, "ciudad": dest["ciudad"], "emoji": dest["emoji"], "clave": clave})
 
-        if top:
-            hubo_algo = True
-            header = f"{region['nombre']} — *Top {len(top)} promos*\n📆 _{datetime.now().strftime('%d/%m/%Y %H:%M')}_"
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=header, parse_mode=ParseMode.MARKDOWN)
-            for v in top:
-                msg = formatear_vuelo(v, v["emoji"], v["ciudad"])
-                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
-                cache.add(v["clave"])
-                await asyncio.sleep(0.5)
-        else:
-            # No hubo vuelos dentro del precio, mandar el mejor disponible
-            mejores_absolutos.sort(key=lambda x: x["precio"])
-            mejor = mejores_absolutos[:1]
-            if mejor:
-                hubo_algo = True
-                header = f"{region['nombre']} — *Sin promos bajo USD {region['precio_max']}*\n📆 _{datetime.now().strftime('%d/%m/%Y %H:%M')}_"
-                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=header, parse_mode=ParseMode.MARKDOWN)
-                v = mejor[0]
-                msg = formatear_vuelo(v, v["emoji"], v["ciudad"], es_mejor_disponible=True)
-                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
-                cache.add(v["clave"])
-                await asyncio.sleep(0.5)
+    resultados.sort(key=lambda x: x["precio"])
 
-    log.info("Bonus Track...")
-    bonus_encontrados = []
-    for bt in BONUS_TRACK:
-        log.info(f"  {bt['nombre']}")
-        vuelo, vuelo_abs = buscar_vuelo(amadeus, bt["origen"], bt["destino"], bt["precio_max"])
-        v = vuelo or vuelo_abs
-        if v:
-            clave = f"BT-{bt['origen']}-{bt['destino']}-{v['fecha_ida']}-{v['precio']}"
-            if clave not in cache:
-                bonus_encontrados.append({**v, "nombre": bt["nombre"], "emoji": bt["emoji"], "clave": clave, "es_mejor": vuelo is None})
-
-    bonus_encontrados.sort(key=lambda x: x["precio"])
-    bonus_top = bonus_encontrados[:2]
-
-    if bonus_top:
+    if resultados:
         hubo_algo = True
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="✨ *Bonus Track — Combinaciones especiales*", parse_mode=ParseMode.MARKDOWN)
-        for v in bonus_top:
-            partes = v["nombre"].split("→")
-            msg = formatear_vuelo(v, v["emoji"], partes[1].strip(), partes[0].strip(), es_mejor_disponible=v.get("es_mejor", False))
+        header = (
+            f"✈️ *SearchElfla — Promos del día*\n"
+            f"📆 _{datetime.now().strftime('%d/%m/%Y')}_\n"
+            f"🎲 Comodín: *{comodin['ciudad']}* {comodin['emoji']}"
+        )
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=header, parse_mode=ParseMode.MARKDOWN)
+
+        for v in resultados[:6]:  # máximo 6 promos
+            msg = formatear_vuelo(v, v["emoji"], v["ciudad"])
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
+            cache.add(v["clave"])
+            await asyncio.sleep(0.5)
+
+    # Si no hubo nada dentro del precio, mandar el mejor disponible
+    if not resultados and mejores_absolutos:
+        hubo_algo = True
+        mejores_absolutos.sort(key=lambda x: x["precio"])
+        header = f"✈️ *SearchElfla — Mejor disponible hoy*\n📆 _{datetime.now().strftime('%d/%m/%Y')}_"
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=header, parse_mode=ParseMode.MARKDOWN)
+        for v in mejores_absolutos[:3]:
+            msg = formatear_vuelo(v, v["emoji"], v["ciudad"], es_mejor_disponible=True)
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
             cache.add(v["clave"])
             await asyncio.sleep(0.5)
