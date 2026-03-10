@@ -1,5 +1,6 @@
 """
-✈️ SearchElfla Bot - Intercepta requests internas de Google Flights
+✈️ SearchElfla Bot - Google Flights scraping
+Destinos fijos + comodín rotativo. 1 vez por día.
 """
 
 import asyncio
@@ -55,37 +56,7 @@ def guardar_cache(cache):
         json.dump(list(cache), f)
 
 
-def extraer_precios_de_response(body_text):
-    """Extrae precios USD de las respuestas internas de Google Flights."""
-    precios = []
-    try:
-        # Buscar patrones de precio con contexto USD o $ cercano
-        # Formato típico en respuestas internas: ,"USD","450", o similar
-        matches = re.findall(r'["\[]USD["\]],?\s*["\[]?(\d{3,5})["\]]?', body_text)
-        for m in matches:
-            p = int(m)
-            if 200 < p < 8000:
-                precios.append(p)
-
-        # Formato: "price":{"amount":"550"
-        matches2 = re.findall(r'"(?:amount|price|totalPrice|total)"\s*:\s*"?(\d{3,5})"?', body_text)
-        for m in matches2:
-            p = int(m)
-            if 200 < p < 8000:
-                precios.append(p)
-
-        # Formato con decimales tipo 550.00
-        matches3 = re.findall(r'\b([3-9]\d{2}|[1-7]\d{3})\.\d{2}\b', body_text)
-        for m in matches3:
-            p = int(m)
-            if 200 < p < 8000:
-                precios.append(p)
-    except Exception:
-        pass
-    return precios
-
-
-async def buscar_vuelo(context, origen, destino, precio_max):
+async def buscar_vuelo(page, origen, destino, precio_max):
     mejor = None
     mejor_absoluto = None
 
@@ -95,70 +66,48 @@ async def buscar_vuelo(context, origen, destino, precio_max):
                 datetime.strptime(fecha_ida, "%Y-%m-%d") + timedelta(days=dias)
             ).strftime("%Y-%m-%d")
 
-            precios_capturados = []
-
-            page = await context.new_page()
-
-            async def capturar_response(response):
-                url = response.url
-                # Interceptar requests que Google Flights hace internamente
-                if any(k in url for k in ["flights/", "travel/flights", "batchexecute", "BestFlights", "GetShoppingResults"]):
-                    try:
-                        body = await response.text()
-                        ps = extraer_precios_de_response(body)
-                        precios_capturados.extend(ps)
-                    except Exception:
-                        pass
-
-            page.on("response", capturar_response)
+            url = (
+                f"https://www.google.com/travel/flights?"
+                f"q=flights+from+{origen}+to+{destino}"
+                f"+on+{fecha_ida}+returning+{fecha_vuelta}"
+                f"&curr=USD&hl=es"
+            )
 
             try:
-                # URL directa con parámetros de fecha
-                fi = fecha_ida.replace("-", "")
-                fv = fecha_vuelta.replace("-", "")
-                url = (
-                    f"https://www.google.com/travel/flights?"
-                    f"tfs=CBwQAhoeEgoyMDI2LTA3LTEwagcIARID{origen}cgcIARID{destino}"
-                    f"&curr=USD&hl=es-419"
-                )
-                # URL más simple que sí funciona
-                url = (
-                    f"https://www.google.com/travel/flights/search?"
-                    f"tfs=CBwQAho"
-                    f"&hl=es-419&curr=USD"
-                    f"&tfu=EgIIAQ"
-                )
-                # Usar URL con query string legible
-                url = (
-                    f"https://www.google.com/travel/flights?"
-                    f"q=flights+from+{origen}+to+{destino}"
-                    f"+on+{fecha_ida}+returning+{fecha_vuelta}"
-                    f"&curr=USD&hl=es"
-                )
+                await page.goto(url, timeout=60000, wait_until="networkidle")
+                await page.wait_for_timeout(8000)
 
-                await page.goto(url, timeout=50000, wait_until="networkidle")
-                await page.wait_for_timeout(6000)
+                content = await page.content()
+                precios = []
 
-                # Si no capturamos nada por network, intentar desde el DOM
-                if not precios_capturados:
-                    content = await page.content()
-                    # Buscar precios con $ seguido de 3-4 dígitos, con contexto
-                    for pattern in [
-                        r'aria-label="[^"]*\$\s*(\d[\d,]+)',
-                        r'>\$\s*([3-9]\d{2}|[1-7]\d{3})<',
-                        r'"totalPrice"\s*:\s*"(\d{3,5})"',
-                        r'data-price="([3-9]\d{2}|[1-7]\d{3})"',
-                    ]:
-                        for m in re.findall(pattern, content):
-                            try:
-                                p = int(m.replace(",", ""))
-                                if 200 < p < 8000:
-                                    precios_capturados.append(p)
-                            except Exception:
-                                pass
+                # Buscar precios con $
+                for pattern in [
+                    r'\$\s*(\d{1,2},\d{3})',   # $1,234
+                    r'\$\s*(\d{3,4})',           # $345
+                    r'USD\s*(\d[\d,]+)',          # USD 1,234
+                ]:
+                    for m in re.findall(pattern, content):
+                        try:
+                            p = float(m.replace(",", ""))
+                            if 200 < p < 8000:
+                                precios.append(p)
+                        except Exception:
+                            pass
 
-                if precios_capturados:
-                    precio = min(precios_capturados)
+                # aria-label con precios
+                elementos = await page.query_selector_all('[aria-label*="$"], [aria-label*="USD"]')
+                for el in elementos:
+                    label = await el.get_attribute("aria-label") or ""
+                    for n in re.findall(r'[\$USD\s]+(\d[\d,]+)', label):
+                        try:
+                            p = float(n.replace(",", ""))
+                            if 200 < p < 8000:
+                                precios.append(p)
+                        except Exception:
+                            pass
+
+                if precios:
+                    precio = min(precios)
                     link = (
                         f"https://www.google.com/travel/flights?"
                         f"q=flights+from+{origen}+to+{destino}"
@@ -174,23 +123,20 @@ async def buscar_vuelo(context, origen, destino, precio_max):
                             mejor = vuelo
                     if mejor_absoluto is None or precio < mejor_absoluto["precio"]:
                         mejor_absoluto = vuelo
-                    log.info(f"    → USD {precio}")
+                    log.info(f"    → USD {precio:.0f}")
                 else:
-                    log.warning(f"    → Sin precio encontrado")
+                    log.info(f"    → Sin precio")
 
             except Exception as e:
                 log.warning(f"    Error: {e}")
-            finally:
-                await page.close()
 
     return mejor, mejor_absoluto
 
 
-def formatear_vuelo(vuelo, emoji, ciudad, origen_label=None, es_mejor_disponible=False):
-    origen = origen_label or vuelo["origen"]
+def formatear_vuelo(vuelo, emoji, ciudad, es_mejor_disponible=False):
     prefijo = "⚠️ *Mejor precio disponible*\n" if es_mejor_disponible else ""
     return (
-        f"{prefijo}{emoji} *{origen} → {ciudad}*\n"
+        f"{prefijo}{emoji} *{vuelo['origen']} → {ciudad}*\n"
         f"  📅 {vuelo['fecha_ida']} → {vuelo['fecha_vuelta']} _{vuelo['dias']} días_\n"
         f"  💰 *USD {vuelo['precio']:.0f}* ida y vuelta\n"
         f"  🔗 [Ver vuelo]({vuelo['link']})"
@@ -218,7 +164,6 @@ async def enviar_alertas():
                 "--no-sandbox", "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
-                "--lang=es-AR",
             ]
         )
         context = await browser.new_context(
@@ -230,16 +175,16 @@ async def enviar_alertas():
             locale="es-AR",
             timezone_id="America/Argentina/Buenos_Aires",
             viewport={"width": 1280, "height": 800},
-            extra_http_headers={"Accept-Language": "es-AR,es;q=0.9"},
         )
         await context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
+        page = await context.new_page()
 
         for dest in todos_destinos:
             for origen in ORIGENES:
                 log.info(f"  {origen} → {dest['ciudad']}")
-                vuelo, vuelo_abs = await buscar_vuelo(context, origen, dest["codigo"], dest["precio_max"])
+                vuelo, vuelo_abs = await buscar_vuelo(page, origen, dest["codigo"], dest["precio_max"])
 
                 if vuelo:
                     clave = f"{origen}-{dest['codigo']}-{vuelo['fecha_ida']}-{vuelo['precio']}"
