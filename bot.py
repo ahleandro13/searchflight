@@ -59,19 +59,26 @@ def extraer_precios_de_response(body_text):
     """Extrae precios USD de las respuestas internas de Google Flights."""
     precios = []
     try:
-        # Google Flights devuelve datos en formato especial - buscar números que parecen precios
-        # Patrones típicos en las respuestas internas
-        matches = re.findall(r'"(\d{3,5})"(?:,|\])', body_text)
+        # Buscar patrones de precio con contexto USD o $ cercano
+        # Formato típico en respuestas internas: ,"USD","450", o similar
+        matches = re.findall(r'["\[]USD["\]],?\s*["\[]?(\d{3,5})["\]]?', body_text)
         for m in matches:
             p = int(m)
-            if 150 < p < 8000:
+            if 200 < p < 8000:
                 precios.append(p)
 
-        # También buscar formato con decimales
-        matches2 = re.findall(r'(\d{3,4})\.\d{2}', body_text)
+        # Formato: "price":{"amount":"550"
+        matches2 = re.findall(r'"(?:amount|price|totalPrice|total)"\s*:\s*"?(\d{3,5})"?', body_text)
         for m in matches2:
             p = int(m)
-            if 150 < p < 8000:
+            if 200 < p < 8000:
+                precios.append(p)
+
+        # Formato con decimales tipo 550.00
+        matches3 = re.findall(r'\b([3-9]\d{2}|[1-7]\d{3})\.\d{2}\b', body_text)
+        for m in matches3:
+            p = int(m)
+            if 200 < p < 8000:
                 precios.append(p)
     except Exception:
         pass
@@ -135,18 +142,17 @@ async def buscar_vuelo(context, origen, destino, precio_max):
                 # Si no capturamos nada por network, intentar desde el DOM
                 if not precios_capturados:
                     content = await page.content()
-                    # Buscar en el HTML renderizado
+                    # Buscar precios con $ seguido de 3-4 dígitos, con contexto
                     for pattern in [
                         r'aria-label="[^"]*\$\s*(\d[\d,]+)',
-                        r'>\$\s*(\d{3,4})<',
-                        r'"totalPrice"\s*:\s*"(\d+)',
-                        r'data-price="(\d+)"',
-                        r'\$(\d{3,4})\b',
+                        r'>\$\s*([3-9]\d{2}|[1-7]\d{3})<',
+                        r'"totalPrice"\s*:\s*"(\d{3,5})"',
+                        r'data-price="([3-9]\d{2}|[1-7]\d{3})"',
                     ]:
                         for m in re.findall(pattern, content):
                             try:
                                 p = int(m.replace(",", ""))
-                                if 150 < p < 8000:
+                                if 200 < p < 8000:
                                     precios_capturados.append(p)
                             except Exception:
                                 pass
