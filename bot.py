@@ -67,6 +67,8 @@ def buscar_vuelo(amadeus, origen, destino, precio_max):
         for dias in DURACIONES:
             fecha_vuelta = (datetime.strptime(fecha_ida, "%Y-%m-%d") + timedelta(days=dias)).strftime("%Y-%m-%d")
             try:
+                import time
+                time.sleep(3)
                 response = amadeus.shopping.flight_offers_search.get(
                     originLocationCode=origen,
                     destinationLocationCode=destino,
